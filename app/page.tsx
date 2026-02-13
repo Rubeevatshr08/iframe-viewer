@@ -22,35 +22,49 @@ export default function Home() {
     setIframeUrl("");
 
     try {
-      const res = await fetch("/api/check-site", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ url: formattedUrl }),
-      });
+      // Use a proxy that only returns headers (Faster than full content proxies)
+      const proxyUrl = `https://api.hackertarget.com/httpheaders/?q=${encodeURIComponent(formattedUrl)}`;
+      const res = await fetch(proxyUrl);
+      const text = await res.text();
 
-      const data = await res.json();
-
-      if (!data.success) {
-        console.error(`❌ Error checking "${formattedUrl}":`, data.message);
-        setStatus(`Error checking ${formattedUrl}`);
-        return;
+      if (!res.ok || text.includes("error")) {
+        throw new Error("Failed to fetch headers");
       }
 
-      if (data.canEmbed) {
-        console.log(`✅ "${formattedUrl}" loaded successfully.`);
-        setStatus(`Loaded successfully: ${formattedUrl}`);
+      const headers = text.toLowerCase();
+      let canEmbed = true;
+      let reason = "Allowed";
+
+      // Detect X-Frame-Options
+      if (headers.includes("x-frame-options:")) {
+        if (headers.includes("deny") || headers.includes("sameorigin")) {
+          canEmbed = false;
+          reason = "Blocked by X-Frame-Options";
+        }
+      }
+
+      // Detect CSP frame-ancestors
+      if (headers.includes("content-security-policy:")) {
+        if (headers.includes("frame-ancestors 'none'") || headers.includes("frame-ancestors 'self'")) {
+          canEmbed = false;
+          reason = "Blocked by CSP: frame-ancestors restriction";
+        }
+      }
+
+      if (canEmbed) {
+        console.log(`✅ "${formattedUrl}" is likely embeddable.`);
+        setStatus(`Loaded: ${formattedUrl}`);
         setIframeUrl(formattedUrl);
       } else {
-        console.error(
-          `❌ "${formattedUrl}" blocked from iframe embedding. Reason: ${data.reason}`
-        );
-        setStatus(`Blocked: ${formattedUrl}`);
+        console.error(`❌ "${formattedUrl}" blocked. Reason: ${reason}`);
+        setStatus(`Blocked: ${reason}`);
+        setIframeUrl("");
       }
-    } catch (error) {
-      console.error(`❌ Unexpected error loading "${formattedUrl}"`);
-      setStatus(`Unexpected error: ${formattedUrl}`);
+    } catch (error: any) {
+      console.error(`❌ Error checking headers:`, error.message);
+      // Fallback: Try to load anyway if header check fails
+      setStatus(`Check failed, attempting to load: ${formattedUrl}`);
+      setIframeUrl(formattedUrl);
     }
   };
 
